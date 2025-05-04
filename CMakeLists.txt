@@ -10,6 +10,31 @@ find_package(ament_cmake REQUIRED)
 # uncomment the following section in order to fill in
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
+if("$ENV{GZ_VERSION}" STREQUAL "harmonic" OR NOT DEFINED "$ENV{GZ_VERSION}")
+    find_package(gz-plugin2 REQUIRED COMPONENTS register)
+  find_package(gz-cmake3 REQUIRED)
+  find_package(gz-sim8 REQUIRED)
+  find_package(gz-math7 REQUIRED)
+  set(GZ_PLUGIN_VER  ${gz-plugin2_VERSION_MAJOR})
+  set(GZ_COMMON_VER  ${gz-common5_VERSION_MAJOR})
+  set(GZ_MATH_VER  ${gz-math7_VERSION_MAJOR})
+  set(GZ_SIM_VER  ${gz-sim8_VERSION_MAJOR})
+endif()
+
+
+
+add_library(VacuumGripperPlugin src/vacuum_plugin.cc)
+target_include_directories(VacuumGripperPlugin PRIVATE
+  include)
+target_link_libraries(VacuumGripperPlugin
+    gz-common${GZ_COMMON_VER}::gz-common${GZ_COMMON_VER}
+    gz-math${GZ_MATH_VER}::eigen3
+    gz-sim${GZ_SIM_VER}::gz-sim${GZ_SIM_VER}
+)
+
+install(
+  TARGETS VacuumGripperPlugin DESTINATION lib/${PROJECT_NAME}
+)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -23,4 +48,8 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
+ament_environment_hooks("${CMAKE_CURRENT_SOURCE_DIR}/hooks/${PROJECT_NAME}.dsv.in")
+ament_environment_hooks("${CMAKE_CURRENT_SOURCE_DIR}/hooks/${PROJECT_NAME}.sh.in")
+
 ament_package()
+

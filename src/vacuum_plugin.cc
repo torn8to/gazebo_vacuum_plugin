@@ -1,17 +1,22 @@
-#include <gz/msgs/boolean.pb.h>
+#include "vacuum_plugin.hh"
 
-#include <gz/register/plugin.hh>
-#include <gz/common/Register.hh>
-//#include <gz/sensors/Noise.hh> #TODO: add a flag to implement noise
-//#include <gz/sensors/SensorFactory.hh>
+#include <gz/msgs/boolean.pb.h>
+#include <gz/msgs/Utility.hh>
+#include <gz/plugin/Register.hh>
 
 #include <gz/math/Pose3.hh>
 #include <gz/math/Quaternion.hh>
 
-#include <gz/sim/components/Name.hh>
 #include <gz/sim/components/ParentEntity.hh>
-#include <gz/sim/components/World.hh>
+#include <gz/sim/components/Link.hh>
+#include <gz/sim/components/Model.hh>
 #include <gz/sim/components/Pose.hh>
+#include <gz/sim/components/Name.hh>
+#include <gz/sim/components/AngularVelocity.hh>
+#include <gz/sim/components/LinearVelocity.hh>
+#include <gz/sim/World.hh>
+#include <gz/sim/Model.hh>
+#include <gz/sim/Link.hh>
 #include <gz/sim/EntityComponentManager.hh>
 #include <gz/sim/Util.hh>
 
@@ -47,49 +52,65 @@ class OnMessageWrapper
   }
 };
 */
-typename std::shared_ptr<OnMessageWrapper<gz::msgs::Boolean>> GraspingOnMessageWrapperPtr;
+//typename std::shared_ptr<OnMessageWrapper<gz::msgs::Boolean>> GraspingOnMessageWrapperPtr;
 // Private data class
-class VacuumGripperPluginPrivate{
-
-  public gz::sim::systems::Model model{gz::sim::kNullEntity}; // model
-  public gz::sim::systems::Entity gripperLink{gz::sim::kNullEntity};// link
-  //
-  public std::string modelName;
-  public std::string linkName;
-  //  variables for topic names
-  public std::string namespace, enable_topic, gripping_topic;
-  // 
-  public bool enabled_succ;
-  public float max_force;
-  public float scale;
-
-  //publisher for publishing whether or not the gripper is currently gripping something
-  public gz::transport::Node::Publisher pub;
-  // one is a msg for dat like grasping
-  //public gz::msgs::Boolean grasping_msg;
-  //whether or not the cvacuum is on
-  public bool enable_vacuum;
-  public std::mutex _mutex;
-
-}
-
+//
 GZ_ADD_PLUGIN(gz::sim::systems::VacuumGripperPlugin,
               gz::sim::System,
-              gz::sim::system::VacuumGripper::ISystemConfigure,
-              gz::sim::system::VacuumGripper::ISystemPreUpdate);
+              gz::sim::systems::VacuumGripperPlugin::ISystemConfigure,
+              gz::sim::systems::VacuumGripperPlugin::ISystemPreUpdate);
 
 
 GZ_ADD_PLUGIN_ALIAS(gz::sim::systems::VacuumGripperPlugin, "VacuumGripperPlugin");
 
 
-void VacuumGripperPlugin::Configure(const gz::sim::systemsL::Entity   &_entity,
-                       const std::shared_ptr<const gz::sim::sdf::Element> &_sdf,
-                       gz::sim::systems::EntityComponentManager &_ecm,
-                       gz::sim::systems::EventManager &_eventMgr){
+class gz::sim::systems::VacuumGripperPluginPrivate{
+
+public: gz::sim::Model model{gz::sim::kNullEntity}; //model
+public: gz::sim::Entity parentLink{gz::sim::kNullEntity};//link entity referenc e
+public: std::string modelName;
+public: std::string parentName;// vacuum_link name
+public: std::string robot_namespace;
+public: std::string enable_topic;
+public: std::string grasping_topic;
+
+public: float max_force;
+public: float scale;
+public: float min_depth;
+public: float max_depth;
+
+  //publisher for publishing whether or not the gripper is currently gripping something
+public: gz::transport::Node::Publisher graspingPub;
+public: gz::transport::Node node;
+  // one is a msg for dat like grasping
+  //public gz::msgs::Boolean grasping_msg;
+  //whether or not the cvacuum is on
+public: bool enable_vacuum;
+public: std::mutex enableMsgMutex;
+
+public: void enableCb(const gz::msgs::Boolean &_msg){
+  std::lock_guard<std::mutex> lock(this->enableMsgMutex);
+  this->enable_vacuum = Convert(_msg);//returns the value of the msg
+  }
+};
+
+gz::sim::systems::VacuumGripperPlugin::VacuumGripperPlugin():
+  dataPtr(new VacuumGripperPluginPrivate){
+}
+
+gz::sim::systems::VacuumGripperPlugin::~VacuumGripperPlugin(){
+}
+
+
+void gz::sim::systems::VacuumGripperPlugin::Configure(const gz::sim::Entity   &_entity,
+                       const std::shared_ptr<const sdf::Element> &_sdf,
+                       gz::sim::EntityComponentManager &_ecm,
+                       gz::sim::EventManager &_eventMgr){
   //TODO:
     //check if model is valid ?
   this->dataPtr->model = Model(_entity);
-  if(!this -> model.Valid(_ecm)){
+  this->dataPtr->modelName = this->dataPtr->model.Name(_ecm);
+  if(!this ->dataPtr-> model.Valid(_ecm)){
     gzerr << "vaccum plugin should be attached to a model, entity failed to initialize " << std::endl;
     return;
   }
@@ -100,93 +121,111 @@ void VacuumGripperPlugin::Configure(const gz::sim::systemsL::Entity   &_entity,
   //<topic>
   //<max_force>
   auto sdfClone = _sdf->Clone();
-  if(sdfClone->hasElement("enable_topic")){
-    this->topic_partial = sdfClone->Get<std::string>("enable_topic");
+  if(sdfClone->HasElement("robotNamespace")){
+    this->dataPtr->robot_namespace = sdfClone->Get<std::string>("robotNamespace");
+  }
+  else{
+    this->dataPtr->robot_namespace = ""; //INFO: empty by default reccomended to fill this out for the robots namespace
+  }
+  if(sdfClone->HasElement("enableTopic")){
+    this->dataPtr->enable_topic = {this->dataPtr->robot_namespace + "/" + sdfClone->Get<std::string>("enableTopic")};
   }
   else{
     gzerr << "a topic was not given failed to configure plugin" << std::endl;
     return; 
   }
-
-  if(sdfClone->hasElement("namespace")){
-    this->dataPtr->namespace = sdfClone->Get<std::string>("namespace");
+  if(sdfClone->HasElement("grasping_topic")){
+    this->dataPtr->grasping_topic = {this->dataPtr->robot_namespace +"/" + sdfClone->Get<std::string>("enable_topic")};
   }
   else{
-    this->namespace = ""; //INFO: empty by default reccomended to fill this out for the robots namespace
+    gzerr << "a grasping topic was not given failed to configure plugin" << std::endl;
+    return; 
   }
-  if(sdfClone->hasElement("max_depth")){
-    this->max_depth = sdfClone->Get<float>("namespace");
+  if(sdfClone->HasElement("gripper_link" )){
+    this->dataPtr->parentName = sdfClone->Get<std::string>("gripper_link");
+    this->dataPtr->parentLink = this->dataPtr->model.LinkByName(_ecm, this->dataPtr->parentName);
+  }else{
+    gzerr << "a gripper link was not given or malformed gripper_link name was given and the plugin failed to configure " << std::endl;
+    return; 
+  }
+  if(sdfClone->HasElement("max_depth")){
+    this->dataPtr->max_depth = sdfClone->Get<float>("namespace");
   }
   else{
-    this->max_depth = 0.05; //INFO: empty by default reccomended to fill this out for the robots namespace
+    this->dataPtr->max_depth = 0.05; //INFO: empty by default reccomended to fill this out for the robots namespace
     gzmsg << "min depth is not assigned in the sdf defaults to 0.05" << std::endl;
   }//
-  if(sdfClone->hasElement("min_depth")){
-    this->min_depth = sdfClone->Get<float>("min_depth");
-
+  if(sdfClone->HasElement("min_depth")){
+    this->dataPtr->min_depth = sdfClone->Get<float>("min_depth");
   }
   else{
-    this->min_depth = 0.01; 
+    this->dataPtr->min_depth = 0.01; 
     gzmsg << "min depth is not assigned in the sdf defaults to 0.01" <<std::endl;
   }
-  if(this->namespace == ""){
-    std::string topic{this->namespace + "/" + this -> topic_partial}
-  }else{
-    std::string topic{this->topic_partial}
-  },,
-  this-> dataPtr-> graspingPub = this->node.Advertise<msgs::boolean>();
-  this->dataPtr->this->dataPtr->node.Subscribe<>(topic, &VaccumGripper::onGripperUpdate, this);// subscripe to enable topic of transport with in gazebo
+  this->dataPtr->model = Model(_entity);
+ 
+  // ensure vacuum_link has world angular velocity
+  if (!_ecm.EntityHasComponentType(this->dataPtr->parentLink, gz::sim::components::WorldAngularVelocity::typeId)){
+    _ecm.CreateComponent(this->dataPtr->parentLink, gz::sim::components::WorldAngularVelocity());
+  }
+  if (!_ecm.EntityHasComponentType(this->dataPtr->parentLink, gz::sim::components::WorldLinearVelocity::typeId)){
+    _ecm.CreateComponent(this->dataPtr->parentLink, gz::sim::components::WorldLinearVelocity());
+  }
+  if (!_ecm.EntityHasComponentType(this->dataPtr->parentLink, gz::sim::components::WorldPose::typeId)){
+    _ecm.CreateComponent(this->dataPtr->parentLink, gz::sim::components::WorldPose());
+  }
+  this->dataPtr->graspingPub = this->dataPtr->node.Advertise<gz::msgs::Boolean>(this->dataPtr->grasping_topic);
+  this->dataPtr->node.Subscribe(this->dataPtr->enable_topic,
+                                &gz::sim::systems::VacuumGripperPluginPrivate::enableCb, 
+                                this->dataPtr.get());// subscripe to enable topic of transport with in gazebo
 };
 
 
-void VacuumGripper::onGrippingCallback(const gz::msgs::boolean &_msg){
-    // lock o update
-  std::lock<std::mutex> lock(this->dataPtr->enable_vacuum);
-  this->dataPtr->enable_vacuum = _msg.data;//returns the value of the msg
-}
-
-
-void VacuumGripper::PreUpdate(const UpdateInfo &_info,
-                                const EntityComponentManager &_ecm){
-
-  //INFO:  get the position of the plane joint and get the normal force
+void gz::sim::systems::VacuumGripperPlugin::PreUpdate(const gz::sim::UpdateInfo &_info,
+                                                      gz::sim::EntityComponentManager &_ecm){
+  //info:  get the position of the plane joint and get the normal force
   // check current state of the gripper if it is true
   //  get gripper position and check if there is a gripper at adistance from the position of the thing
   gz::msgs::Boolean grasping_msg;
-  if(!this->enabled_vacuum){
+  if(!this->dataPtr->enable_vacuum){
     grasping_msg.set_data(false);
-    this->dataPtr->pub.Publish(grasping_msg);
-    return;
   }
-  else
-  {
-      gz::math::Pose3d parent_pose  = WorldPose(_ecm, _ecm.entityByName(this->dataPtr->parentName));
-      _ecm.Each<components::Link,components::WorldPose>(
-              [&](const Entity &_entity,
-                  const components::Link *) -> bool{
-        if (_entity.GetName() != this->dataPtr->modelName ||
-            _entity.linkName() != this->dataPtr->parentName)
-            gz::sim::Link link = Link(_entity);
-            link_pos = worldPose(_entity, _ecm);
-            gz::math::Vector3d diff  = parent_pose.Pos() - link_pos.Pos() ;
-            double norm  = diff.length;
-            if (norm < this->max_distance){
-                // TODO apply velocity
-                math::Vector3d parentLinearVelocity = parent_entity.WorldLinearVelocity();
-                math::Vector3d parentAngularVelocity = parent_entity.WorldAngularVelcoity();
-                norm_force = 1/norm;
+  else{
+    gz::sim::Link parentLink(this->dataPtr->parentLink);
+    // optionals not checked because they are enabled in Configure
+    gz::math::Pose3d parentPose = Link(this->dataPtr->parentLink).WorldPose(_ecm).value();
+    gz::math::Vector3d parentLinearVelocity = parentLink.WorldLinearVelocity(_ecm).value();
+    gz::math::Vector3d parentAngularVelocity = parentLink.WorldAngularVelocity(_ecm).value();
+    std::vector<gz::sim::Entity> models = _ecm.EntitiesByComponents(gz::sim::components::Model());
+    for(gz::sim::Entity entity: models){
+      gz::sim::Model model{entity};
+      if (model.Name(_ecm) != this->dataPtr->modelName){
+        std::vector<gz::sim::Entity> links = model.Links(_ecm);
+        for(gz::sim::Entity entity_sub: links)
+        {
+          gz::sim::Link link = Link(entity_sub);
+          std::optional<gz::math::Pose3d> linkPosOptional =  link.WorldPose(_ecm);
+          //returns an optional and needs to be handled
+          if(!linkPosOptional.has_value()){
+            continue;
           }
-      });
+          gz::math::Pose3d diff = parentPose - linkPosOptional.value();
+          double norm = diff.Pos().Length();
+          //TODO fix this to fit under 
+          if(norm< 0.05){
+            link.SetLinearVelocity(_ecm, parentLinearVelocity);
+            link.SetAngularVelocity(_ecm, parentLinearVelocity);
+            double norm_force = 1/norm;
+            if(norm_force>50){
+              norm_force = 50;
+            }
+            gz::math::Vector3d appliedForce = diff.Pos().Normalize() * norm_force;
+            link.AddWorldForce(_ecm, appliedForce);
+            grasping_msg.set_data(true);
+          }
+        }
+      }
+    }
   }
-  //TODO: implement the normal force matching
-};
-void VacuumGripper::onGripperUpdate(const msgs::boolean &_msg){
-  
-
+  this->dataPtr->graspingPub.Publish(grasping_msg);
 }
-
-
-
-GZ_ADD_PLUGIN(VaccumGripper::VaccumGripper,
-              gz::sim::System,
-              VaccumGripper::ISystemPreUpdate);
