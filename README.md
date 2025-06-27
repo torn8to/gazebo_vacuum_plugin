@@ -1,6 +1,6 @@
 # Vacuum plugin gazebo
 based on the existing plugin from https://github.com/ros-simulation/gazebo_ros_pkgs developed by wentaro but ported to for the new version of gazebo harmonic
-It has some modifications to generate more force so you don't have to use the workaround of using many plugin instances for the same thing and tailor it to your robot gripper size
+It has some modifications to generate more force so you don't have to use the workaround of using many plugin instances for getting it to work properly thing and tailor it better fit your needs
 
 
 ![](vacuum_gripper_demo.gif)
