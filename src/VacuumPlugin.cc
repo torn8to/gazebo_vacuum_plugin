@@ -1,4 +1,4 @@
-#include "vacuum_plugin.hh"
+#include "VacuumPlugin.hh"
 
 #include <gz/msgs/boolean.pb.h>
 #include <gz/msgs/Utility.hh>
@@ -134,29 +134,29 @@ void gz::sim::systems::VacuumGripperPlugin::Configure(const gz::sim::Entity   &_
     gzerr << "a topic was not given failed to configure plugin" << std::endl;
     return; 
   }
-  if(sdfClone->HasElement("grasping_topic")){
-    this->dataPtr->grasping_topic = {this->dataPtr->robot_namespace +"/" + sdfClone->Get<std::string>("enable_topic")};
+  if(sdfClone->HasElement("graspingTopic")){
+    this->dataPtr->grasping_topic = {this->dataPtr->robot_namespace +"/" + sdfClone->Get<std::string>("graspingTopic")};
   }
   else{
     gzerr << "a grasping topic was not given failed to configure plugin" << std::endl;
     return; 
   }
-  if(sdfClone->HasElement("gripper_link" )){
-    this->dataPtr->parentName = sdfClone->Get<std::string>("gripper_link");
+  if(sdfClone->HasElement("gripperLink" )){
+    this->dataPtr->parentName = sdfClone->Get<std::string>("gripperLink");
     this->dataPtr->parentLink = this->dataPtr->model.LinkByName(_ecm, this->dataPtr->parentName);
   }else{
     gzerr << "a gripper link was not given or malformed gripper_link name was given and the plugin failed to configure " << std::endl;
     return; 
   }
-  if(sdfClone->HasElement("max_depth")){
-    this->dataPtr->max_depth = sdfClone->Get<float>("namespace");
+  if(sdfClone->HasElement("maxDepth")){
+    this->dataPtr->max_depth = sdfClone->Get<float>("maxDepth");
   }
   else{
     this->dataPtr->max_depth = 0.05; //INFO: empty by default reccomended to fill this out for the robots namespace
     gzmsg << "min depth is not assigned in the sdf defaults to 0.05" << std::endl;
   }//
-  if(sdfClone->HasElement("min_depth")){
-    this->dataPtr->min_depth = sdfClone->Get<float>("min_depth");
+  if(sdfClone->HasElement("minDepth")){
+    this->dataPtr->min_depth = sdfClone->Get<float>("minDepth");
   }
   else{
     this->dataPtr->min_depth = 0.01; 

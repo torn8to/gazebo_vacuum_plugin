@@ -23,9 +23,10 @@ endif()
 
 
 
-add_library(VacuumGripperPlugin src/vacuum_plugin.cc)
-target_include_directories(VacuumGripperPlugin PRIVATE
-  include)
+add_library(VacuumGripperPlugin
+            SHARED
+            src/VacuumPlugin.cc)
+include_directories(VacuumGripperPlugin PRIVATE include)
 target_link_libraries(VacuumGripperPlugin
     gz-common${GZ_COMMON_VER}::gz-common${GZ_COMMON_VER}
     gz-math${GZ_MATH_VER}::eigen3
